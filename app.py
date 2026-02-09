@@ -137,6 +137,9 @@ def generate_report(openai_key, coach_style, habits, mood, weather, dog, daily_n
         )
         return getattr(resp, "output_text", None) or "⚠️ 리포트 텍스트를 가져오지 못했어요."
     except Exception as e:
+        error_text = str(e)
+        if "invalid_api_key" in error_text or "Incorrect API key" in error_text or "401" in error_text:
+            return "❌ OpenAI API Key가 유효하지 않아요. 올바른 키로 다시 시도해 주세요."
         return f"❌ 리포트 생성 실패: {e}"
 
 
@@ -186,6 +189,9 @@ def generate_chat_reply(openai_key, coach_style, user_message):
         )
         return getattr(resp, "output_text", None) or "지금은 답변을 만들기 어려워요."
     except Exception as e:
+        error_text = str(e)
+        if "invalid_api_key" in error_text or "Incorrect API key" in error_text or "401" in error_text:
+            return "❌ OpenAI API Key가 유효하지 않아요. 올바른 키로 다시 시도해 주세요."
         return f"❌ 대화 생성 실패: {e}"
 
 
