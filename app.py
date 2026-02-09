@@ -2,7 +2,7 @@
 import os
 import re
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 import pandas as pd
@@ -157,6 +157,30 @@ COACHES = ["스파르타 코치", "따뜻한 멘토", "게임 마스터"]
 if "history" not in st.session_state:
     # 데모 6일 + 오늘 합쳐서 7일 차트 만들 거라서, 여기서는 비워둬도 OK
     st.session_state.history = []
+if "water_cups" not in st.session_state:
+    st.session_state.water_cups = 0
+if "exercise_minutes" not in st.session_state:
+    st.session_state.exercise_minutes = 0
+if "exercise_type" not in st.session_state:
+    st.session_state.exercise_type = "🚶 걷기"
+if "exercise_intensity" not in st.session_state:
+    st.session_state.exercise_intensity = "🙂 가벼움"
+if "study_pomodoros" not in st.session_state:
+    st.session_state.study_pomodoros = 0
+if "sleep_hours" not in st.session_state:
+    st.session_state.sleep_hours = "7"
+if "sleep_regular" not in st.session_state:
+    st.session_state.sleep_regular = "⏰ 일정"
+if "sleep_quality" not in st.session_state:
+    st.session_state.sleep_quality = "🙂 보통"
+if "wake_success" not in st.session_state:
+    st.session_state.wake_success = True
+if "wake_time" not in st.session_state:
+    st.session_state.wake_time = "☀️ 7시대"
+if "wake_routines" not in st.session_state:
+    st.session_state.wake_routines = set()
+if "checkin_summary" not in st.session_state:
+    st.session_state.checkin_summary = None
 
 
 # Sidebar
@@ -172,51 +196,185 @@ coach = st.radio("🎙️ 코치 스타일", COACHES, horizontal=True, index=1)
 
 st.divider()
 
-# Habit check-in (2 columns)
+# Habit check-in (tab-based mini UI)
 st.subheader("✅ 오늘의 습관 체크인")
 
-c1, c2 = st.columns(2)
-keys = list(HABITS.keys())
+tabs = st.tabs(["💧 물", "🏃 운동", "📚 공부", "😴 수면", "⏰ 기상"])
 
-with c1:
-    v0 = st.checkbox(HABITS[keys[0]])
-    v1 = st.checkbox(HABITS[keys[1]])
-    v2 = st.checkbox(HABITS[keys[2]])
-with c2:
-    v3 = st.checkbox(HABITS[keys[3]])
-    v4 = st.checkbox(HABITS[keys[4]])
+with tabs[0]:
+    st.markdown("#### 🥛 물 마시기")
+    water_goal = 8
+    water_cols = st.columns([1, 1, 2])
+    if water_cols[0].button("➖", key="water_minus"):
+        st.session_state.water_cups = max(0, st.session_state.water_cups - 1)
+    if water_cols[1].button("➕", key="water_plus"):
+        st.session_state.water_cups = min(water_goal, st.session_state.water_cups + 1)
+    water_cols[2].markdown(
+        f"{'🥛' * st.session_state.water_cups}{'⬜' * (water_goal - st.session_state.water_cups)}"
+    )
+    st.write(f"현재 {st.session_state.water_cups}/{water_goal}컵")
 
-habits = {
-    keys[0]: v0,
-    keys[1]: v1,
-    keys[2]: v2,
-    keys[3]: v3,
-    keys[4]: v4,
-}
+with tabs[1]:
+    st.markdown("#### 🏃 운동하기")
+    st.session_state.exercise_type = st.radio(
+        "종류", ["🚶 걷기", "🏋️ 근력", "🧘 스트레칭", "🏃 유산소", "🏀 기타"], horizontal=True
+    )
+    st.session_state.exercise_intensity = st.radio(
+        "강도", ["🙂 가벼움", "😅 보통", "🥵 빡셈"], horizontal=True
+    )
+    ex_cols = st.columns([1, 1, 1, 2])
+    if ex_cols[0].button("+5분", key="ex_plus_5"):
+        st.session_state.exercise_minutes += 5
+    if ex_cols[1].button("+10분", key="ex_plus_10"):
+        st.session_state.exercise_minutes += 10
+    if ex_cols[2].button("+20분", key="ex_plus_20"):
+        st.session_state.exercise_minutes += 20
+    if ex_cols[3].button("리셋", key="ex_reset"):
+        st.session_state.exercise_minutes = 0
+    st.write(f"누적 시간: {st.session_state.exercise_minutes}분")
+
+with tabs[2]:
+    st.markdown("#### 📚 공부/독서")
+    study_cols = st.columns([1, 1, 2])
+    if study_cols[0].button("➖", key="study_minus"):
+        st.session_state.study_pomodoros = max(0, st.session_state.study_pomodoros - 1)
+    if study_cols[1].button("➕", key="study_plus"):
+        st.session_state.study_pomodoros += 1
+    token = "🍅" * st.session_state.study_pomodoros
+    study_cols[2].markdown(token or "⬜")
+    total_minutes = st.session_state.study_pomodoros * 25
+    st.write(f"🍅 x {st.session_state.study_pomodoros} = {total_minutes}분")
+    if st.session_state.study_pomodoros >= 4:
+        st.success("🔥 연속 집중 배지 획득!")
+
+with tabs[3]:
+    st.markdown("#### 😴 수면")
+    st.session_state.sleep_hours = st.radio(
+        "수면시간", ["5↓", "6", "7", "8", "9+"], horizontal=True
+    )
+    st.session_state.sleep_regular = st.radio(
+        "규칙성", ["⏰ 일정", "😵 들쭉", "🌙 늦잠"], horizontal=True
+    )
+    st.session_state.sleep_quality = st.radio(
+        "숙면감", ["😪 낮음", "🙂 보통", "😴 좋음"], horizontal=True
+    )
+
+with tabs[4]:
+    st.markdown("#### ⏰ 기상 미션")
+    st.session_state.wake_success = st.toggle("기상 성공", value=st.session_state.wake_success)
+    st.session_state.wake_time = st.radio(
+        "기상 시간대", ["🌅 6시대", "☀️ 7시대", "☁️ 8시대", "🌤️ 9시+"], horizontal=True
+    )
+    routine_cols = st.columns(3)
+    routine_map = {"🧼 세수": "wash", "🛏️ 이불정리": "bed", "🧹 정리": "clean"}
+    for idx, (label, key) in enumerate(routine_map.items()):
+        if routine_cols[idx].button(label, key=f"routine_{key}"):
+            if key in st.session_state.wake_routines:
+                st.session_state.wake_routines.remove(key)
+            else:
+                st.session_state.wake_routines.add(key)
+    if st.session_state.wake_routines:
+        st.write(f"완료 루틴: {len(st.session_state.wake_routines)}개")
+    else:
+        st.write("완료 루틴: 0개")
 
 mood = st.slider("🙂 오늘 기분은?", 1, 10, 6)
 
-done = sum(1 for v in habits.values() if v)
-total = len(habits)
-achievement = int(round((done / total) * 100))
+water_goal = 8
+water_score = min(int(round(st.session_state.water_cups / water_goal * 20)), 20)
+exercise_score = min(int(round(st.session_state.exercise_minutes / 30 * 20)), 20)
+study_score = min(st.session_state.study_pomodoros * 5, 20)
+sleep_base = {"5↓": 5, "6": 10, "7": 20, "8": 20, "9+": 15}[st.session_state.sleep_hours]
+sleep_quality_bonus = {"😪 낮음": 0, "🙂 보통": 2, "😴 좋음": 4}[st.session_state.sleep_quality]
+sleep_score = min(sleep_base + sleep_quality_bonus, 20)
+wake_time_score = {"🌅 6시대": 20, "☀️ 7시대": 18, "☁️ 8시대": 12, "🌤️ 9시+": 8}[
+    st.session_state.wake_time
+]
+wake_score = 0
+if st.session_state.wake_success:
+    wake_score = min(wake_time_score + len(st.session_state.wake_routines), 20)
+
+total_score = water_score + exercise_score + study_score + sleep_score + wake_score
+completion = {
+    "물 마시기": st.session_state.water_cups >= water_goal,
+    "운동하기": st.session_state.exercise_minutes >= 20,
+    "공부/독서": st.session_state.study_pomodoros >= 1,
+    "수면": sleep_score >= 15,
+    "기상 미션": st.session_state.wake_success,
+}
+done = sum(1 for v in completion.values() if v)
+total = len(completion)
+achievement = int(round((total_score / 100) * 100))
 
 # Metrics
 m1, m2, m3 = st.columns(3)
-m1.metric("달성률", f"{achievement}%")
-m2.metric("달성 습관", f"{done}/{total}")
+m1.metric("오늘 점수", f"{total_score}/100")
+m2.metric("완료 미션", f"{done}/{total}")
 m3.metric("기분", f"{mood}/10")
+
+habits = {
+    "기상 미션": completion["기상 미션"],
+    "물 마시기": completion["물 마시기"],
+    "공부/독서": completion["공부/독서"],
+    "운동하기": completion["운동하기"],
+    "수면": completion["수면"],
+}
+
+st.markdown("### ✅ 오늘 체크인 완료")
+if st.button("오늘 체크인 완료", type="primary"):
+    scores = {
+        "물": water_score,
+        "운동": exercise_score,
+        "공부": study_score,
+        "수면": sleep_score,
+        "기상": wake_score,
+    }
+    sorted_scores = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    top_two = sorted_scores[:2]
+    bottom = sorted_scores[-1]
+    missions = []
+    if water_score < 15:
+        missions.append("🥛 물 6컵 이상 챙기기")
+    if exercise_score < 15:
+        missions.append("🏃 20분 이상 가볍게 움직이기")
+    if study_score < 10:
+        missions.append("🍅 포모도로 1회 달성")
+    if sleep_score < 15:
+        missions.append("😴 7~8시간 수면 시도")
+    if wake_score < 15:
+        missions.append("⏰ 7시대 기상에 도전")
+    missions = (missions + ["✅ 오늘 기록 간단 메모 남기기"])[:3]
+
+    st.session_state.checkin_summary = {
+        "score": total_score,
+        "top_two": top_two,
+        "bottom": bottom,
+        "missions": missions,
+    }
+
+summary = st.session_state.checkin_summary
+if summary:
+    st.success(f"오늘 총점: {summary['score']}/100")
+    st.write(
+        f"잘한 점 Top 2: {summary['top_two'][0][0]} {summary['top_two'][0][1]}점, "
+        f"{summary['top_two'][1][0]} {summary['top_two'][1][1]}점"
+    )
+    st.write(f"아쉬운 점: {summary['bottom'][0]} {summary['bottom'][1]}점")
+    st.markdown("**내일 미션 3개**")
+    for idx, mission in enumerate(summary["missions"], start=1):
+        st.write(f"{idx}. {mission}")
 
 st.divider()
 
 # 7-day chart (6 demo + today)
 today = datetime.now().date()
 demo = []
-pattern = [3, 4, 2, 5, 1, 4]  # 6일 샘플(달성 개수)
-moods =   [6, 7, 5, 8, 4, 7]
+pattern = [62, 74, 48, 85, 40, 70]  # 6일 샘플(총점)
+moods = [6, 7, 5, 8, 4, 7]
 for i in range(6, 0, -1):
     d = today - timedelta(days=i)
     idx = 6 - i
-    demo.append({"date": d.isoformat(), "achievement": int(round(pattern[idx] / total * 100)), "mood": moods[idx]})
+    demo.append({"date": d.isoformat(), "achievement": pattern[idx], "mood": moods[idx]})
 
 demo.append({"date": today.isoformat(), "achievement": achievement, "mood": mood})
 df = pd.DataFrame(demo)
