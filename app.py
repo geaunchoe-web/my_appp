@@ -95,7 +95,7 @@ FORMAT_RULES = """출력 형식(반드시 준수):
 """
 
 
-def generate_report(openai_key, coach_style, habits, mood, weather, dog):
+def generate_report(openai_key, coach_style, habits, mood, weather, dog, daily_note):
     # ✅ openai 패키지/키 없으면 안내만 하고 종료
     if OpenAI is None:
         return "⚠️ openai 패키지가 설치되지 않았어요. requirements.txt에 `openai`를 추가하고 재배포하세요."
@@ -120,6 +120,7 @@ def generate_report(openai_key, coach_style, habits, mood, weather, dog):
         "habits_unchecked": unchecked,
         "weather": weather_text,
         "dog": dog_text,
+        "note": daily_note or "없음",
     }
 
     system = SYSTEM_PROMPTS.get(coach_style, SYSTEM_PROMPTS["따뜻한 멘토"])
@@ -137,6 +138,55 @@ def generate_report(openai_key, coach_style, habits, mood, weather, dog):
         return getattr(resp, "output_text", None) or "⚠️ 리포트 텍스트를 가져오지 못했어요."
     except Exception as e:
         return f"❌ 리포트 생성 실패: {e}"
+
+
+def build_ics_event(date_str, score, note):
+    summary = f"습관 체크인 {score}/100"
+    description = note or "메모 없음"
+    dtstamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    return "\n".join(
+        [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//AI Habit Tracker//KR",
+            "BEGIN:VEVENT",
+            f"UID:{date_str}-habit-checkin",
+            f"DTSTAMP:{dtstamp}",
+            f"DTSTART;VALUE=DATE:{date_str.replace('-', '')}",
+            f"SUMMARY:{summary}",
+            f"DESCRIPTION:{description}",
+            "END:VEVENT",
+            "END:VCALENDAR",
+        ]
+    )
+
+
+def generate_chat_reply(openai_key, coach_style, user_message):
+    if OpenAI is None or not openai_key:
+        tone = {
+            "스파르타 코치": "짧고 단호하게",
+            "따뜻한 멘토": "따뜻하게",
+            "게임 마스터": "퀘스트처럼",
+        }.get(coach_style, "따뜻하게")
+        return f"{tone} 답할게요. 오늘 할 수 있는 작은 행동 하나만 정해볼까요?"
+
+    system = SYSTEM_PROMPTS.get(coach_style, SYSTEM_PROMPTS["따뜻한 멘토"])
+    prompt = (
+        "너는 습관 코치다. 짧고 대화하듯 답하고, 질문 1개로 끝낸다.\n"
+        f"사용자 메시지: {user_message}"
+    )
+    try:
+        client = OpenAI(api_key=openai_key.strip())
+        resp = client.responses.create(
+            model="gpt-5-mini",
+            input=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return getattr(resp, "output_text", None) or "지금은 답변을 만들기 어려워요."
+    except Exception as e:
+        return f"❌ 대화 생성 실패: {e}"
 
 
 HABITS = {
@@ -181,6 +231,12 @@ if "wake_routines" not in st.session_state:
     st.session_state.wake_routines = set()
 if "checkin_summary" not in st.session_state:
     st.session_state.checkin_summary = None
+if "mood_score" not in st.session_state:
+    st.session_state.mood_score = 6
+if "daily_note" not in st.session_state:
+    st.session_state.daily_note = ""
+if "chat_messages" not in st.session_state:
+    st.session_state.chat_messages = []
 
 
 # Sidebar
@@ -278,7 +334,24 @@ with tabs[4]:
     else:
         st.write("완료 루틴: 0개")
 
-mood = st.slider("🙂 오늘 기분은?", 1, 10, 6)
+st.markdown("### 🙂 오늘 기분")
+mood_options = [
+    ("😵", 2, "매우 낮음"),
+    ("😕", 4, "낮음"),
+    ("🙂", 6, "보통"),
+    ("😄", 8, "좋음"),
+    ("🤩", 10, "매우 좋음"),
+]
+mood_cols = st.columns(len(mood_options))
+for idx, (emoji, score, label) in enumerate(mood_options):
+    if mood_cols[idx].button(f"{emoji}\n{label}", key=f"mood_{score}"):
+        st.session_state.mood_score = score
+st.write(f"선택된 기분: {st.session_state.mood_score}/10")
+
+st.markdown("### 📝 오늘 한마디")
+st.session_state.daily_note = st.text_input(
+    "짧게 남기기", value=st.session_state.daily_note, placeholder="예) 오늘은 집중이 잘 됐다."
+)
 
 water_goal = 8
 water_score = min(int(round(st.session_state.water_cups / water_goal * 20)), 20)
@@ -310,7 +383,7 @@ achievement = int(round((total_score / 100) * 100))
 m1, m2, m3 = st.columns(3)
 m1.metric("오늘 점수", f"{total_score}/100")
 m2.metric("완료 미션", f"{done}/{total}")
-m3.metric("기분", f"{mood}/10")
+m3.metric("기분", f"{st.session_state.mood_score}/10")
 
 habits = {
     "기상 미션": completion["기상 미션"],
@@ -350,6 +423,7 @@ if st.button("오늘 체크인 완료", type="primary"):
         "top_two": top_two,
         "bottom": bottom,
         "missions": missions,
+        "note": st.session_state.daily_note,
     }
 
 summary = st.session_state.checkin_summary
@@ -363,6 +437,16 @@ if summary:
     st.markdown("**내일 미션 3개**")
     for idx, mission in enumerate(summary["missions"], start=1):
         st.write(f"{idx}. {mission}")
+    if summary.get("note"):
+        st.write(f"📝 한마디: {summary['note']}")
+
+    ics_content = build_ics_event(today.isoformat(), summary["score"], summary.get("note", ""))
+    st.download_button(
+        "📅 캘린더에 추가(ICS)",
+        data=ics_content,
+        file_name=f"habit-checkin-{today.isoformat()}.ics",
+        mime="text/calendar",
+    )
 
 st.divider()
 
@@ -376,15 +460,26 @@ for i in range(6, 0, -1):
     idx = 6 - i
     demo.append({"date": d.isoformat(), "achievement": pattern[idx], "mood": moods[idx]})
 
-demo.append({"date": today.isoformat(), "achievement": achievement, "mood": mood})
+demo.append({"date": today.isoformat(), "achievement": achievement, "mood": st.session_state.mood_score})
 df = pd.DataFrame(demo)
 
 st.subheader("📈 최근 7일 달성률")
-chart = alt.Chart(df).mark_bar().encode(
+bar = alt.Chart(df).mark_bar(color="#6C8CF5").encode(
     x=alt.X("date:N", title="날짜"),
     y=alt.Y("achievement:Q", title="달성률(%)", scale=alt.Scale(domain=[0, 100])),
     tooltip=["date", "achievement", "mood"]
 ).properties(height=260)
+line = alt.Chart(df).mark_line(color="#FF8A65").encode(
+    x="date:N",
+    y=alt.Y("mood:Q", scale=alt.Scale(domain=[0, 10])),
+    tooltip=["date", "achievement", "mood"],
+)
+points = alt.Chart(df).mark_point(color="#FF8A65", size=60).encode(
+    x="date:N",
+    y="mood:Q",
+    tooltip=["date", "achievement", "mood"],
+)
+chart = alt.layer(bar, line, points).resolve_scale(y="independent")
 st.altair_chart(chart, use_container_width=True)
 
 st.divider()
@@ -396,7 +491,15 @@ if st.button("컨디션 리포트 생성", type="primary"):
         weather = get_weather(city, weather_key)
         dog = get_dog_image()
     with st.spinner("AI 리포트 생성 중..."):
-        report = generate_report(openai_key, coach, habits, mood, weather, dog)
+        report = generate_report(
+            openai_key,
+            coach,
+            habits,
+            st.session_state.mood_score,
+            weather,
+            dog,
+            st.session_state.daily_note,
+        )
 
     left, right = st.columns(2)
 
@@ -423,15 +526,33 @@ if st.button("컨디션 리포트 생성", type="primary"):
     share = [
         f"📊 AI 습관 트래커 ({today.isoformat()})",
         f"도시: {city} | 코치: {coach}",
-        f"달성률: {achievement}% ({done}/{total}) | 기분: {mood}/10",
+        f"달성률: {achievement}% ({done}/{total}) | 기분: {st.session_state.mood_score}/10",
         f"날씨: {weather['description']} {weather['temp_c']:.1f}°C" if weather else "날씨: (없음)",
         f"강아지: {dog.get('breed','unknown')}" if dog else "강아지: (없음)",
+        f"한마디: {st.session_state.daily_note}" if st.session_state.daily_note else "한마디: (없음)",
         "",
         "🧠 리포트",
         report,
     ]
     st.markdown("#### 📣 공유용 텍스트")
     st.code("\n".join(share), language="text")
+
+st.divider()
+
+st.subheader("💬 멘토와 대화")
+for message in st.session_state.chat_messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+prompt = st.chat_input("오늘 체크인에 대해 한 줄로 이야기해볼까요?")
+if prompt:
+    st.session_state.chat_messages.append({"role": "user", "content": prompt})
+    reply = generate_chat_reply(openai_key, coach, prompt)
+    st.session_state.chat_messages.append({"role": "assistant", "content": reply})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    with st.chat_message("assistant"):
+        st.markdown(reply)
 
 with st.expander("🔎 API 안내"):
     st.markdown(
